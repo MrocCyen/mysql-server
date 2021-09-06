@@ -1,3 +1,5 @@
+.idea
+cmake-build-debug-mingw
 *-t
 *_test
 *.Plo
