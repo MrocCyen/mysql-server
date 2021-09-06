@@ -327,13 +327,21 @@ in the buffer pool to all database pages in the buffer pool smaller than
 the following number. But it is not guaranteed that the value stays below
 that during a time of heavy update/insert activity. */
 
+//最大脏页比例
 double	srv_max_buf_pool_modified_pct	= 75.0;
+//脏页比例最低水位
 double	srv_max_dirty_pages_pct_lwm	= 0.0;
 
 /* This is the percentage of log capacity at which adaptive flushing,
 if enabled, will kick in. */
+/**
+ * redo log自适应flush
+ */
 ulong	srv_adaptive_flushing_lwm	= 10;
 
+/**
+ * redo log自适应flush
+ */
 /* Number of iterations over which adaptive flushing is averaged. */
 ulong	srv_flushing_avg_loops		= 30;
 

@@ -2355,12 +2355,14 @@ buf_flush_wait_LRU_batch_end(void)
 /*********************************************************************//**
 Calculates if flushing is required based on number of dirty pages in
 the buffer pool.
+ 判断是否需要 flush buffer pool，flush io能力的百分比
 @return percent of io_capacity to flush to manage dirty page ratio */
 static
 ulint
 af_get_pct_for_dirty()
 /*==================*/
 {
+        /**获取当前脏页比例**/
 	double	dirty_pct = buf_get_modified_ratio_pct();
 
 	if (dirty_pct == 0.0) {
@@ -2371,21 +2373,30 @@ af_get_pct_for_dirty()
 	ut_a(srv_max_dirty_pages_pct_lwm
 	     <= srv_max_buf_pool_modified_pct);
 
+        /**最低水位为0**/
 	if (srv_max_dirty_pages_pct_lwm == 0) {
 		/* The user has not set the option to preflush dirty
 		pages as we approach the high water mark. */
+                /**如果脏页比例大于高水位（默认75%）**/
 		if (dirty_pct >= srv_max_buf_pool_modified_pct) {
 			/* We have crossed the high water mark of dirty
 			pages In this case we start flushing at 100% of
 			innodb_io_capacity. */
+                        /**innodb_io_capacity参数设置的100%进行flush**/
 			return(100);
 		}
-	} else if (dirty_pct >= srv_max_dirty_pages_pct_lwm) {
+	} else if (dirty_pct >= srv_max_dirty_pages_pct_lwm) {/**脏页比例大于低水位，并且小于高水位**/
 		/* We should start flushing pages gradually. */
+                /**dirty_pct：60%，srv_max_buf_pool_modified_pct=75%
+                 * (0.6*100)/(0.75+1)=34.28
+                */
 		return(static_cast<ulint>((dirty_pct * 100)
 		       / (srv_max_buf_pool_modified_pct + 1)));
 	}
 
+        /**
+         * 脏页比例小于低水位
+         */
 	return(0);
 }
 
@@ -2400,6 +2411,9 @@ af_get_pct_for_lsn(
 {
 	lsn_t	max_async_age;
 	lsn_t	lsn_age_factor;
+        /**
+         * 获取低水位比例下的日志容量值，默认是日志容量的10%
+         */
 	lsn_t	af_lwm = (srv_adaptive_flushing_lwm
 			  * log_get_capacity()) / 100;
 
@@ -2410,6 +2424,9 @@ af_get_pct_for_lsn(
 
 	max_async_age = log_get_max_modified_age_async();
 
+        /**
+         * 当前的可用日志大于最大刷盘日志量，并且开启了自适应刷盘
+         */
 	if (age < max_async_age && !srv_adaptive_flushing) {
 		/* We have still not reached the max_async point and
 		the user has disabled adaptive flushing. */
@@ -2493,8 +2510,7 @@ page_cleaner_flush_pages_recommendation(
 
 		/* How much LSN we have generated since last call. */
 		lsn_rate = static_cast<lsn_t>(
-			static_cast<double>(cur_lsn - prev_lsn)
-			/ time_elapsed);
+			static_cast<double>(cur_lsn - prev_lsn) / time_elapsed);
 
 		lsn_avg_rate = (lsn_avg_rate + lsn_rate) / 2;
 
@@ -2587,11 +2603,22 @@ page_cleaner_flush_pages_recommendation(
 
 	ut_ad(oldest_lsn <= log_get_lsn());
 
+        /**
+         * 这是个差值
+         */
 	age = cur_lsn > oldest_lsn ? cur_lsn - oldest_lsn : 0;
 
+        /**
+         * flush io能力的百分比
+         */
 	pct_for_dirty = af_get_pct_for_dirty();
+        /**
+         * lsn的flush比例
+         */
 	pct_for_lsn = af_get_pct_for_lsn(age);
-
+        /**
+         * 取最大值
+         */
 	pct_total = ut_max(pct_for_dirty, pct_for_lsn);
 
 	/* Estimate pages to be flushed for the lsn progress */

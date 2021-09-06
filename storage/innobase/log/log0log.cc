@@ -732,8 +732,14 @@ log_calc_max_ages(void)
 
 	ut_ad(group);
 
+        /**
+         * 设置redo-log的最大磁盘空间，也就是64-bits正整数的最大值
+         */
 	smallest_capacity = LSN_MAX;
 
+        /**
+         * 5.7实际只支持一个分组，获取的是除了头(LOG_FILE_HDR_SIZE)之外的总redo-log空间大小
+         */
 	while (group) {
 		if (log_group_get_capacity(group) < smallest_capacity) {
 
@@ -743,6 +749,9 @@ log_calc_max_ages(void)
 		group = UT_LIST_GET_NEXT(log_groups, group);
 	}
 
+        /**
+         * 实际真正可以使用的空间需要乘以一个安全系数0.9
+         */
 	/* Add extra safety */
 	smallest_capacity = smallest_capacity - smallest_capacity / 10;
 
@@ -751,8 +760,14 @@ log_calc_max_ages(void)
 	by single query steps: running out of free log space is a serious
 	system error which requires rebooting the database. */
 
+        /**
+         * 为每个OS线程预留一部分存储空间
+         */
 	free = LOG_CHECKPOINT_FREE_PER_THREAD * (10 + srv_thread_concurrency)
 		+ LOG_CHECKPOINT_EXTRA_FREE;
+        /**
+         * 需要预留足够的内存空间
+         */
 	if (free >= smallest_capacity / 2) {
 		success = false;
 
@@ -761,17 +776,34 @@ log_calc_max_ages(void)
 		margin = smallest_capacity - free;
 	}
 
+        /**
+         * 再预留一部分内存空间
+         *
+         * todo 最终的空间：
+         *  原始-日志头大小-0.1大小-每个os线程的空间-0.1大小
+         *  最后的日志大小大约为原始大小的80%多左右
+         */
 	margin = margin - margin / 10;	/* Add still some extra safety */
 
 	log_sys->log_group_capacity = smallest_capacity;
 
+        /**
+         * 1-1/8=7/8=0.875，约等于原始大小的70%
+         */
 	log_sys->max_modified_age_async = margin
 		- margin / LOG_POOL_PREFLUSH_RATIO_ASYNC;
+        /**
+         * 1-1/16=15/16=0.9375，约等于原始大小的75%
+         */
 	log_sys->max_modified_age_sync = margin
 		- margin / LOG_POOL_PREFLUSH_RATIO_SYNC;
 
+        /**
+         * 1-1/32=31/32=0.96875，约等于原始大小的78%
+         */
 	log_sys->max_checkpoint_age_async = margin - margin
 		/ LOG_POOL_CHECKPOINT_RATIO_ASYNC;
+
 	log_sys->max_checkpoint_age = margin;
 
 failure:
