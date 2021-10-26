@@ -1613,6 +1613,9 @@ RecLock::deadlock_check(lock_t* lock)
 	ut_ad(lock->trx == m_trx);
 	ut_ad(trx_mutex_own(m_trx));
 
+        /**
+         * 死锁检测
+         */
 	const trx_t*	victim_trx =
 			DeadlockChecker::check_and_resolve(lock, m_trx);
 
@@ -1737,6 +1740,9 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 
 	ut_ad(lock_get_wait(lock));
 
+        /**
+         * 死锁检测
+         */
 	dberr_t	err = deadlock_check(lock);
 
 	ut_ad(trx_mutex_own(m_trx));
@@ -1892,38 +1898,64 @@ lock_rec_lock_fast(
 
 	DBUG_EXECUTE_IF("innodb_report_deadlock", return(LOCK_REC_FAIL););
 
+        /**
+         * 查询记录所在得页上面得第一个记录锁
+         */
 	lock_t*	lock = lock_rec_get_first_on_page(lock_sys->rec_hash, block);
 
 	trx_t*	trx = thr_get_trx(thr);
 
 	lock_rec_req_status	status = LOCK_REC_SUCCESS;
 
+        /**
+         * 没有记录锁
+         */
 	if (lock == NULL) {
 
 		if (!impl) {
+                      /**
+                       * 创建记录锁
+                       */
 			RecLock	rec_lock(index, block, heap_no, mode);
 
 			/* Note that we don't own the trx mutex. */
 			rec_lock.create(trx, false, true);
 		}
 
+                /**
+                 * 返回成功
+                 */
 		status = LOCK_REC_SUCCESS_CREATED;
 	} else {
 		trx_mutex_enter(trx);
 
+                /**
+                 * 1、存在第二个记录锁
+                 * 2、第一个锁的事务不是当前事务
+                 */
 		if (lock_rec_get_next_on_page(lock)
 		     || lock->trx != trx
 		     || lock->type_mode != (mode | LOCK_REC)
 		     || lock_rec_get_n_bits(lock) <= heap_no) {
 
+                        /**
+                         * 返回失败
+                         */
 			status = LOCK_REC_FAIL;
 		} else if (!impl) {
 			/* If the nth bit of the record lock is already set
 			then we do not set a new lock bit, otherwise we do
 			set */
+                        /**
+                         * 1、不存在第二个记录锁
+                         * 2、第一个事务是当前事务
+                         */
 			if (!lock_rec_get_nth_bit(lock, heap_no)) {
 				lock_rec_set_nth_bit(lock, heap_no);
-				status = LOCK_REC_SUCCESS_CREATED;
+                          /**
+                           * 返回成功
+                           */
+                          status = LOCK_REC_SUCCESS_CREATED;
 			}
 		}
 
@@ -1977,6 +2009,9 @@ lock_rec_lock_slow(
 
 	trx_mutex_enter(trx);
 
+        /**
+         * 判断当前事务是否已经持有了一个优先级更高的锁，如果是的话，直接返回成功
+         */
 	if (lock_rec_has_expl(mode, block, heap_no, trx)) {
 
 		/* The trx already has a strong enough lock on rec: do
@@ -1985,7 +2020,9 @@ lock_rec_lock_slow(
 		err = DB_SUCCESS;
 
 	} else {
-
+                /**
+                 * 检查是否存在和当前申请锁模式冲突的锁
+                 */
 		const lock_t* wait_for = lock_rec_other_has_conflicting(
 			mode, block, heap_no, trx);
 
@@ -1995,16 +2032,22 @@ lock_rec_lock_slow(
 			request in the queue, as this transaction does not
 			have a lock strong enough already granted on the
 			record, we may have to wait. */
-
+                        /**
+                         * 如果存在的话，就创建一个锁对象
+                         */
 			RecLock	rec_lock(thr, index, block, heap_no, mode);
-
+                        /**
+                         * 并加入到等待队列中，这里会进行死锁检测
+                         */
 			err = rec_lock.add_to_waitq(wait_for);
 
 		} else if (!impl) {
 
 			/* Set the requested lock on the record, note that
 			we already own the transaction mutex. */
-
+                        /**
+                         * 并加入到等待队列中
+                         */
 			lock_rec_add_to_queue(
 				LOCK_REC | mode, block, heap_no, index, trx,
 				true);
@@ -2060,12 +2103,24 @@ lock_rec_lock(
 
 	/* We try a simplified and faster subroutine for the most
 	common cases */
+        /**
+         * 快速加锁能否成功
+         */
 	switch (lock_rec_lock_fast(impl, mode, block, heap_no, index, thr)) {
 	case LOCK_REC_SUCCESS:
+                /**
+                 * 成功
+                 */
 		return(DB_SUCCESS);
 	case LOCK_REC_SUCCESS_CREATED:
+                /**
+                * 成功
+                */
 		return(DB_SUCCESS_LOCKED_REC);
 	case LOCK_REC_FAIL:
+                /**
+                 * 缓慢加锁
+                 */
 		return(lock_rec_lock_slow(impl, mode, block,
 					  heap_no, index, thr));
 	}
@@ -7437,6 +7492,9 @@ DeadlockChecker::select_victim() const
 		}
 	}
 
+        /**
+         * 通常事务权重低的回滚
+         */
 	if (trx_weight_ge(m_wait_lock->trx, m_start)) {
 
 		/* The joining transaction is 'smaller',
@@ -7509,6 +7567,9 @@ DeadlockChecker::search()
 
 			notify(lock);
 
+                        /**
+                         * 当发生死锁时，需要选择一个牺牲者，通常事务权重低的回滚
+                         */
 			return(select_victim());
 
 		} else if (is_too_deep()) {
@@ -7636,6 +7697,9 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	do {
 		DeadlockChecker	checker(trx, lock, s_lock_mark_counter);
 
+                /**
+                 * 找到死锁冲突的事务
+                 */
 		victim_trx = checker.search();
 
 		/* Search too deep, we rollback the joining transaction only
